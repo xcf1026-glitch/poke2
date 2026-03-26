@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>寶可夢 3D 卡牌對戰</title>
+    <style>
+        :root {
+            --card-width: 200px;
+            --card-height: 300px;
+            --tz: 250px; /* 3D 旋轉半徑 */
+        }
+        
+        body {
+            margin: 0;
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden; /* 防止整個頁面滾動 */
+            user-select: none; /* 防文字反白 */
+            touch-action: pan-y; /* 允許原生上下滾動，但橫向交給我們的 JS 處理 */
+        }
+
+        .hidden { display: none !important; }
+
+        /* ====== 載入畫面 ====== */
+        #loading-screen {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.2rem;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 1rem;
+            cursor: pointer;
+            background: #ffcb05;
+            border: 2px solid #3b4cca;
+            border-radius: 8px;
+            font-weight: bold;
+            color: #333;
+            transition: 0.2s;
+        }
+        button:disabled { background: #555; border-color: #333; color: #888; cursor: not-allowed; }
+        button:hover:not(:disabled) { transform: scale(1.05); }
+
+        /* ====== 第一階段：3D 選卡 ====== */
+        #phase-1 {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 5vh;
+        }
+
+        .scene {
+            width: 100vw;
+            height: 60vh;
+            perspective: 1000px; /* 3D 視角深度 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 50px;
+        }
+
+        /* 手機版縮小 3D 舞台防跑版 */
+        @media (max-width: 768px) {
+            .scene { transform: scale(0.65); margin-top: 20px;}
+        }
+
+        .carousel {
+            width: var(--card-width);
+            height: var(--card-height);
+            position: relative;
+            transform-style: preserve-3d;
+            /* 移除 transition 以便拖曳時無延遲，放開時 JS 會加上動畫 */
+        }
+
+        .card {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
+            border-radius: 12px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: #333;
+            box-sizing: border-box;
+            padding: 10px;
+            backface-visibility: hidden;
+        }
+
+        .card img { width: 120px; height: 120px; filter: drop-shadow(0 5px 5px rgba(0,0,0,0.3)); }
+        .card h3 { margin: 5px 0 0 0; font-size: 1.2rem; }
+        .card p.eng-name { margin: 0; font-size: 0.8rem; color: #777; text-transform: capitalize; }
+        .card .types { font-size: 0.8rem; margin: 10px 0; font-weight: bold; color: #0078d7; }
+        .card .stats { width: 100%; display: flex; justify-content: space-around; margin-bottom: 15px; font-size: 0.9rem;}
+        .card .stats span { font-weight: bold; color: #d32f2f; }
+
+        /* ====== 第二階段：戰鬥畫面 ====== */
+        #phase-2 {
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .battle-arena {
+            width: 100%;
+            max-width: 1000px;
+            height: 80vh;
+            display: flex;
+            flex-direction: row; /* 桌機橫向 */
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .combatant {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .combatant .card { position: relative; box-shadow: 0 0 20px rgba(255, 203, 5, 0.5); }
+
+        .log-container {
+            flex: 1.5;
+            height: 100%;
+            background: #000;
+            border: 3px solid #ffcb05;
+            border-radius: 10px;
+            padding: 15px;
+            overflow-y: auto;
+            color: #fff;
+            font-family: monospace;
+            font-size: 1.1rem;
+            line-height: 1.5;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .log-msg.damage { color: #ff5555; }
+        .log-msg.sys { color: #55ff55; }
+
+        /* 手機版 Flexbox Order 垂直排列 */
+        @media (max-width: 768px) {
+            .battle-arena {
+                flex-direction: column;
+            }
+            #opp-area { order: 1; transform: scale(0.8); height: 250px;}
+            .log-container { order: 2; width: 100%; max-height: 30vh; font-size: 0.9rem;}
+            #player-area { order: 3; transform: scale(0.8); height: 250px;}
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading-screen">
+        <h2 id="loading-text">正在下載全國中文圖鑑... (0/1025)</h2>
+        <button id="mainDrawBtn" disabled>抽取 5 張卡牌</button>
+    </div>
+
+    <div id="phase-1" class="hidden">
+        <h2 style="margin:0;">請左右滑動並選擇出戰寶可夢</h2>
+        <div class="scene">
+            <div class="carousel" id="carousel">
+                </div>
+        </div>
+    </div>
+
+    <div id="phase-2" class="hidden">
+        <button id="startBattleBtn">開始對戰！</button>
+        <button id="resetBtn" class="hidden">重新抽卡</button>
+        <div class="battle-arena" style="margin-top: 15px;">
+            <div id="player-area" class="combatant"></div>
+            <div id="battle-log" class="log-container"></div>
+            <div id="opp-area" class="combatant"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
